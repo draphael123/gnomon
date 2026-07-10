@@ -257,29 +257,28 @@ const MONUMENT={x:150,w:3,ht:34};
 let cycleT=DAY_LEN*0.10,day=1,isNight=false,elevDeg=0,safeLight=true;
 let toSun={x:1,y:0},psi=0;
 function sunAt(ct){
-  const night=ct>DAY_LEN;
-  const f=Math.min(ct/DAY_LEN,1);
+  const f=((ct%DAY_LEN)+DAY_LEN)%DAY_LEN/DAY_LEN;
   const p=(0.03+0.94*f)*Math.PI;             // angle of "toward sun" from +x, CCW (y down)
   const ts={x:Math.cos(p),y:-Math.sin(p)};
   const elev=Math.min(p,Math.PI-p)*180/Math.PI;
-  return {night,f,psi:p,toSun:ts,elev};
+  return {night:false,f,psi:p,toSun:ts,elev};
 }
 function updateSun(dt){
   cycleT+=dt;
-  if(cycleT>DAY_LEN+NIGHT_LEN){cycleT-=DAY_LEN+NIGHT_LEN;day++;toast('day '+day+' — the sun rises','#ffd9a0');}
+  if(cycleT>DAY_LEN){cycleT-=DAY_LEN;day++;toast('day '+day+' — the sun wheels east','#ffd9a0');}
   const s=sunAt(cycleT);
-  isNight=s.night;toSun=s.toSun;psi=s.psi;elevDeg=s.elev;
-  // eclipse: every 2nd day around high noon, the moon crosses the sun
+  isNight=false;toSun=s.toSun;psi=s.psi;elevDeg=s.elev;
+  // eclipse: every 3rd day around high noon, the moon crosses the sun — the only mercy
   eclCover=0;
-  if(!isNight&&day%3===0&&s.f>0.465&&s.f<0.535){
+  if(day%3===0&&s.f>0.465&&s.f<0.535){
     const ep=(s.f-0.465)/0.07;
     eclCover=Math.sin(ep*Math.PI);
     if(eclCover>0.1&&eclToastDay!==day){eclToastDay=day;toast('the eclipse — run while it holds','#bfe0ff');blip(70,2.0,0.10,-25);}
   }
-  // green flash the instant the setting sun crosses the safe line
+  // green flash as the sun slips toward the horizon
   if(prevElev>SAFE_ELEV&&elevDeg<=SAFE_ELEV&&s.f>0.5)flashT=1.0;
   prevElev=elevDeg;
-  safeLight=isNight||elevDeg<SAFE_ELEV||eclCover>0.85;
+  safeLight=eclCover>0.85; // shade comes from things that cast it — nothing else
 }
 
 /* ================= lit test ================= */
@@ -829,7 +828,7 @@ function render(){
 
   // sun-sight
   if((keys['ShiftLeft']||keys['ShiftRight'])&&!isNight){
-    const fut=sunAt(Math.min(cycleT+SUNSIGHT_AHEAD,DAY_LEN));
+    const fut=sunAt(cycleT+SUNSIGHT_AHEAD); // wraps past sunset to the next dawn
     ctx.strokeStyle='rgba(40,26,80,0.55)';ctx.lineWidth=0.12;ctx.setLineDash([0.5,0.5]);
     for(const w2 of wedgePolys(fut.toSun)){pathPoly(ctx,w2.p);ctx.stroke();}
     ctx.setLineDash([]);
@@ -1092,7 +1091,7 @@ const meterFill=document.getElementById('meterFill'),sunNote=document.getElement
 function updateHUD(){
   meterFill.style.width=Math.max(0,smolder)+'%';
   meterFill.style.background=safeLight?'#7fb2ff':(smolder>50?'#ffb347':(smolder>25?'#ff7a30':'#ff4020'));
-  sunNote.textContent=isNight?'night — the shade is everywhere':(safeLight?'low sun — shadows everywhere':(lit?'⚠ you are in the light':''));
+  sunNote.textContent=eclCover>0.1?(safeLight?'totality — all the world is shade':'the moon crosses the sun…'):(lit?'⚠ you are in the light':'');
   statsEl.innerHTML='day '+day+' · '+Math.floor(playT)+'s<br>burned '+deaths+'×';
   promptEl.style.display=(state==='play'&&Math.abs(P.x-statue.cx)<7&&Math.abs(P.y-statue.cy)<17)?'block':'none';
   let vo=(state==='play'&&lit)?Math.min(0.9,(100-smolder)/100*1.1):0;
@@ -1130,7 +1129,7 @@ window.__dbg={
     return{url,len:url.length};
   },
   setSun(f){cycleT=Math.max(0,Math.min(1,f))*DAY_LEN;},
-  night(){cycleT=DAY_LEN+1;},
+  dusk(){cycleT=DAY_LEN*0.95;},
   eclipse(){day=3;cycleT=DAY_LEN*0.5;},
   storm(){gust.dur=8;gust.str=1;gust.dir=1;},
   tp(x,y){P.x=x;P.y=y;P.vx=0;P.vy=0;cam.x=x;cam.y=y-6;},
@@ -1139,7 +1138,7 @@ window.__dbg={
   step(n,dt){for(let i=0;i<(n||1);i++)update(dt||0.016);render();return this.state();},
   probe(x,y){
     const s=sunAt(cycleT);
-    return{shaded:s.night||s.elev<SAFE_ELEV||eclCover>0.85||isSafeAt(x,y)||blocked(x,y,s.toSun),elev:Math.round(s.elev),toSun:{x:+s.toSun.x.toFixed(2),y:+s.toSun.y.toFixed(2)}};
+    return{shaded:eclCover>0.85||isSafeAt(x,y)||blocked(x,y,s.toSun),elev:Math.round(s.elev),toSun:{x:+s.toSun.x.toFixed(2),y:+s.toSun.y.toFixed(2)}};
   },
   state(){return{state,lit,safeLight,smolder:Math.round(smolder),elevDeg:Math.round(elevDeg),pos:{x:+P.x.toFixed(1),y:+P.y.toFixed(1)},vel:{x:+P.vx.toFixed(1),y:+P.vy.toFixed(1)},grounded:P.grounded,day,deaths,frames};}
 };
