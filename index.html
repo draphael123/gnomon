@@ -46,7 +46,7 @@
   <div class="how">
     You are a shadow with nothing left to cast it. Direct sun makes you smolder.<br>
     The sun crosses the sky and never stops — every wedge of shade is a road that drifts and dies.<br>
-    Run the ruin. Turn the gnomon. Reach the bell tower.<br><br>
+    Run the ruin. Turn the gnomon. Shun the lantern wardens — carried fire burns all the same.<br>Reach the bell tower.<br><br>
     A/D — run &nbsp;·&nbsp; SPACE — jump &nbsp;·&nbsp; J / X — shadow dash &nbsp;·&nbsp; E — turn a gnomon &nbsp;·&nbsp; hold SHIFT — sun-sight
   </div>
   <div class="go">click to slip into the shade</div>
@@ -89,10 +89,11 @@ const LVL_MIN=-8,LVL_MAX=310;
 /* ================= canvas ================= */
 const cv=document.getElementById('c'),ctx=cv.getContext('2d');
 const shadeCv=document.createElement('canvas'),sctx=shadeCv.getContext('2d');
+const lightCv=document.createElement('canvas'),lctx=lightCv.getContext('2d');
 let W=960,H=540,SC=16;
 function resize(){
   W=Math.max(innerWidth,320);H=Math.max(innerHeight,180);
-  cv.width=W;cv.height=H;shadeCv.width=W;shadeCv.height=H;
+  cv.width=W;cv.height=H;shadeCv.width=W;shadeCv.height=H;lightCv.width=W;lightCv.height=H;
   SC=H/34;
 }
 addEventListener('resize',resize);resize();
@@ -242,6 +243,17 @@ const statue={cx:146,cy:-15.5,len:24,wid:1.2,ang:-1.2,target:-1.2};
 const wheel={cx:229.5,cy:-21.5,arms:4,len:11,wid:1.6,ang:0};
 // sentinel: stone guard on terrace 2 — its shadow is shade you can ride, its touch burns
 const SENT={x:112,min:106,max:127,dir:1,spd:2.6,y:-5,hw:0.8,ht:2.6,hurtCd:0};
+// lantern wardens: drifting wisps of carried fire — their light burns like the sun's, and stone blocks it the same way
+const LAMPS=[ // low routes: they drift under the arched tower bases, never through a solid
+  {min:62,max:98,y:-2.2,r:6.5,spd:1.7,ph:0.15},
+  {min:196,max:239,y:-2.6,r:6.5,spd:2.1,ph:0.6},
+];
+function lampPos(l,t){ // deterministic time-based ping-pong, so sun-sight can look ahead
+  const span=l.max-l.min;
+  let u=((t*l.spd)/span+l.ph)%2;if(u<0)u+=2;
+  const k=u<1?u:2-u;
+  return {x:l.min+k*span,y:l.y+Math.sin(t*1.6+l.ph*9)*0.25};
+}
 const clouds=[{x:60,y:-46,vx:1.5,r:6},{x:210,y:-52,vx:-1.1,r:7.5}];
 const shrines=[{x:8,y:0},{x:142,y:0},{x:252,y:-6}];
 const GOAL={x:285,y:0};
@@ -282,8 +294,7 @@ function updateSun(dt){
 }
 
 /* ================= lit test ================= */
-function blocked(px,py,ts){
-  const qx=px+ts.x*1500,qy=py+ts.y*1500;
+function blockedSeg(px,py,qx,qy){
   for(const r of solids){
     if(segRect(px,py,qx,qy,r.x,r.y,r.w,r.h))return true;
   }
@@ -299,6 +310,14 @@ function blocked(px,py,ts){
   }
   return false;
 }
+function blocked(px,py,ts){return blockedSeg(px,py,px+ts.x*1500,py+ts.y*1500);}
+function lampLitAt(px,py,t){
+  for(const l of LAMPS){
+    const p=lampPos(l,t===undefined?worldT:t);
+    if(Math.hypot(px-p.x,py-p.y)<l.r&&!blockedSeg(px,py,p.x,p.y))return true;
+  }
+  return false;
+}
 function isSafeAt(px,py){
   for(const s of shrines)if(Math.hypot(px-s.x,py-1.0-(s.y-1.2))<4.2||Math.hypot(px-s.x,py-s.y)<4.2)return true;
   return false;
@@ -306,7 +325,7 @@ function isSafeAt(px,py){
 
 /* ================= state ================= */
 let state='title',playT=0,worldT=0,deaths=0;
-let smolder=100,lit=false;
+let smolder=100,lit=false,litSun=false,litLamp=false,lampSeen=false;
 let respawn=shrines[0];
 const P={x:8,y:0,vx:0,vy:0,hw:0.38,h:1.7,grounded:false,coyote:0,jbuf:0,face:1,phase:0};
 let dashT=0,dashCD=0,immuneT=0,deadT=0;
@@ -489,6 +508,9 @@ function update(dt){
   worldT+=dt;
   updateSun(dt);
   wheel.ang+=0.5*dt;
+  for(const l of LAMPS){
+    if(Math.random()<dt*5){const p=lampPos(l,worldT);spawnEmber(p.x,p.y+0.3,1);}
+  }
   statue.ang+=(statue.target-statue.ang)*Math.min(1,dt*4);
   for(const c of clouds){
     c.x+=c.vx*dt;
@@ -501,7 +523,15 @@ function update(dt){
     playT+=dt;
     stepPhysics(dt);
     const cx=P.x,cy=P.y-1.0;
-    lit=!safeLight&&!isSafeAt(cx,cy)&&!blocked(cx,cy,toSun)&&immuneT<=0;
+    litSun=!safeLight&&!blocked(cx,cy,toSun);
+    litLamp=lampLitAt(cx,cy); // carried fire ignores the eclipse — totality is mercy from the sun only
+    lit=!isSafeAt(cx,cy)&&immuneT<=0&&(litSun||litLamp);
+    if(!lampSeen){
+      for(const l of LAMPS){
+        const p=lampPos(l,worldT);
+        if(Math.hypot(P.x-p.x,P.y-p.y)<l.r+5){lampSeen=true;toast('a lantern warden — carried fire burns all the same','#ffb060');break;}
+      }
+    }
     if(lit){
       smolder-=DRAIN*dt;
       if(Math.random()<dt*26)spawnEmber(P.x,P.y-1,1);
@@ -593,6 +623,42 @@ function wedgePolys(ts){
     const mx=wheel.cx+Math.cos(a)*wheel.len/2,my=wheel.cy+Math.sin(a)*wheel.len/2;
     const wc=rotPts(mx,my,[[-wheel.len/2,-wheel.wid/2],[wheel.len/2,-wheel.wid/2],[wheel.len/2,wheel.wid/2],[-wheel.len/2,wheel.wid/2]],a);
     out.push({p:hull(wc.concat(wc.map(q=>[q[0]+ex,q[1]+ey]))),ox:mx,oy:my});
+  }
+  return out;
+}
+// point-light shadows for the lantern wardens: hull of corners + corners pushed radially away from the lamp
+function castPolyFrom(corners,lx,ly,ext){
+  const pts=corners.slice();
+  for(const c of corners){
+    const dx=c[0]-lx,dy=c[1]-ly,d=Math.hypot(dx,dy)||1;
+    pts.push([c[0]+dx/d*ext,c[1]+dy/d*ext]);
+  }
+  return hull(pts);
+}
+function circRect(lx,ly,r,x,y,w,h2){
+  const nx=Math.max(x,Math.min(lx,x+w)),ny=Math.max(y,Math.min(ly,y+h2));
+  return Math.hypot(lx-nx,ly-ny)<r;
+}
+function lampShadowPolys(lx,ly,r){ // only occluders touching the light disk can shadow it
+  const ext=r*2.2,out=[];
+  for(const s of solids){
+    if(s.noShadow)continue;
+    if(!circRect(lx,ly,r,s.x,s.y,s.w,s.h))continue;
+    out.push(castPolyFrom([[s.x,s.y],[s.x+s.w,s.y],[s.x+s.w,s.y+s.h],[s.x,s.y+s.h]],lx,ly,ext));
+  }
+  if(circRect(lx,ly,r,SENT.x-SENT.hw,SENT.y-SENT.ht,SENT.hw*2,SENT.ht))
+    out.push(castPolyFrom([[SENT.x-SENT.hw,SENT.y-SENT.ht],[SENT.x+SENT.hw,SENT.y-SENT.ht],[SENT.x+SENT.hw,SENT.y],[SENT.x-SENT.hw,SENT.y]],lx,ly,ext));
+  if(Math.hypot(statue.cx-lx,statue.cy-ly)<r+statue.len/2){
+    const sc=rotPts(statue.cx,statue.cy,[[-statue.len/2,-statue.wid/2],[statue.len/2,-statue.wid/2],[statue.len/2,statue.wid/2],[-statue.len/2,statue.wid/2]],statue.ang);
+    out.push(castPolyFrom(sc,lx,ly,ext));
+  }
+  if(Math.hypot(wheel.cx-lx,wheel.cy-ly)<r+wheel.len){
+    for(let i=0;i<wheel.arms;i++){
+      const a=wheel.ang+i*Math.PI*2/wheel.arms;
+      const mx=wheel.cx+Math.cos(a)*wheel.len/2,my=wheel.cy+Math.sin(a)*wheel.len/2;
+      const wc=rotPts(mx,my,[[-wheel.len/2,-wheel.wid/2],[wheel.len/2,-wheel.wid/2],[wheel.len/2,wheel.wid/2],[-wheel.len/2,wheel.wid/2]],a);
+      out.push(castPolyFrom(wc,lx,ly,ext));
+    }
   }
   return out;
 }
@@ -814,6 +880,32 @@ function render(){
       sctx.closePath();sctx.fill();
       sctx.beginPath();sctx.arc(c.x,c.y,c.r,0,7);sctx.fill();
     }
+    // lantern-warden light: build each lamp's reach (glow minus occluder shadows), then carve it out of the shade layer
+    lctx.setTransform(1,0,0,1,0,0);
+    lctx.clearRect(0,0,W,H);
+    setWorld(lctx);
+    for(const l of LAMPS){
+      const p=lampPos(l,worldT);
+      const g4=lctx.createRadialGradient(p.x,p.y,0.3,p.x,p.y,l.r);
+      g4.addColorStop(0,'rgba(255,196,96,0.95)');
+      g4.addColorStop(0.55,'rgba(255,176,72,0.8)');
+      g4.addColorStop(0.9,'rgba(255,150,56,0.4)');
+      g4.addColorStop(1,'rgba(255,140,50,0)');
+      lctx.fillStyle=g4;
+      lctx.beginPath();lctx.arc(p.x,p.y,l.r,0,7);lctx.fill();
+      lctx.strokeStyle='rgba(255,176,80,'+(0.45+0.15*Math.sin(worldT*5+l.ph*9)).toFixed(2)+')';
+      lctx.lineWidth=0.09;
+      lctx.beginPath();lctx.arc(p.x,p.y,l.r,0,7);lctx.stroke();
+      lctx.globalCompositeOperation='destination-out';
+      lctx.fillStyle='#000';
+      for(const sp of lampShadowPolys(p.x,p.y,l.r)){pathPoly(lctx,sp);lctx.fill();}
+      lctx.globalCompositeOperation='source-over';
+    }
+    sctx.setTransform(1,0,0,1,0,0);
+    sctx.globalCompositeOperation='destination-out';
+    sctx.drawImage(lightCv,0,0);
+    sctx.globalCompositeOperation='source-over';
+    setWorld(sctx);
     for(const s of shrines){sctx.beginPath();sctx.arc(s.x,s.y-1.2,4.2,0,7);sctx.fill();}
     ctx.setTransform(1,0,0,1,0,0);
     ctx.globalAlpha=0.62;
@@ -831,6 +923,11 @@ function render(){
     const fut=sunAt(cycleT+SUNSIGHT_AHEAD); // wraps past sunset to the next dawn
     ctx.strokeStyle='rgba(40,26,80,0.55)';ctx.lineWidth=0.12;ctx.setLineDash([0.5,0.5]);
     for(const w2 of wedgePolys(fut.toSun)){pathPoly(ctx,w2.p);ctx.stroke();}
+    ctx.strokeStyle='rgba(160,85,30,0.6)'; // where the wardens will be
+    for(const l of LAMPS){
+      const p=lampPos(l,worldT+SUNSIGHT_AHEAD);
+      ctx.beginPath();ctx.arc(p.x,p.y,l.r,0,7);ctx.stroke();
+    }
     ctx.setLineDash([]);
   }
 
@@ -982,6 +1079,27 @@ function render(){
     ctx.strokeStyle='rgba(255,200,110,'+(0.6*(1-rp)).toFixed(2)+')';ctx.lineWidth=0.2;
     ctx.beginPath();ctx.arc(292,bellY,2+rp*14,0,7);ctx.stroke();
   }
+  // lantern wardens: warm light pools + the wisps themselves
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.globalCompositeOperation='lighter';ctx.globalAlpha=0.55;
+  ctx.drawImage(lightCv,0,0);
+  ctx.globalCompositeOperation='source-over';ctx.globalAlpha=1;
+  setWorld(ctx);
+  for(const l of LAMPS){
+    const p=lampPos(l,worldT);
+    ctx.save();
+    ctx.shadowColor='rgba(255,170,60,0.95)';ctx.shadowBlur=8;
+    ctx.fillStyle='#ffcf7a';
+    ctx.beginPath();ctx.arc(p.x,p.y,0.42,0,7);ctx.fill();
+    ctx.fillStyle='#fff3d0';
+    ctx.beginPath();ctx.arc(p.x,p.y-0.06,0.2,0,7);ctx.fill();
+    ctx.restore();
+    ctx.fillStyle='rgba(255,150,50,0.8)';
+    for(let i=0;i<3;i++){
+      const a=worldT*3.1+i*2.09+l.ph*7;
+      ctx.beginPath();ctx.arc(p.x+Math.cos(a)*0.75,p.y+Math.sin(a*1.3)*0.55,0.09,0,7);ctx.fill();
+    }
+  }
 
   // dust
   for(const p of dust){
@@ -1091,7 +1209,9 @@ const meterFill=document.getElementById('meterFill'),sunNote=document.getElement
 function updateHUD(){
   meterFill.style.width=Math.max(0,smolder)+'%';
   meterFill.style.background=safeLight?'#7fb2ff':(smolder>50?'#ffb347':(smolder>25?'#ff7a30':'#ff4020'));
-  sunNote.textContent=eclCover>0.1?(safeLight?'totality — all the world is shade':'the moon crosses the sun…'):(lit?'⚠ you are in the light':'');
+  sunNote.textContent=eclCover>0.1
+    ?(lit&&litLamp?'⚠ carried fire still burns':(safeLight?'totality — all the world is shade':'the moon crosses the sun…'))
+    :(lit?(litLamp&&!litSun?'⚠ lantern-light burns':'⚠ you are in the light'):'');
   statsEl.innerHTML='day '+day+' · '+Math.floor(playT)+'s<br>burned '+deaths+'×';
   promptEl.style.display=(state==='play'&&Math.abs(P.x-statue.cx)<7&&Math.abs(P.y-statue.cy)<17)?'block':'none';
   let vo=(state==='play'&&lit)?Math.min(0.9,(100-smolder)/100*1.1):0;
@@ -1138,9 +1258,10 @@ window.__dbg={
   step(n,dt){for(let i=0;i<(n||1);i++)update(dt||0.016);render();return this.state();},
   probe(x,y){
     const s=sunAt(cycleT);
-    return{shaded:eclCover>0.85||isSafeAt(x,y)||blocked(x,y,s.toSun),elev:Math.round(s.elev),toSun:{x:+s.toSun.x.toFixed(2),y:+s.toSun.y.toFixed(2)}};
+    const lamp=lampLitAt(x,y);
+    return{shaded:isSafeAt(x,y)||((eclCover>0.85||blocked(x,y,s.toSun))&&!lamp),lamp,elev:Math.round(s.elev),toSun:{x:+s.toSun.x.toFixed(2),y:+s.toSun.y.toFixed(2)}};
   },
-  state(){return{state,lit,safeLight,smolder:Math.round(smolder),elevDeg:Math.round(elevDeg),pos:{x:+P.x.toFixed(1),y:+P.y.toFixed(1)},vel:{x:+P.vx.toFixed(1),y:+P.vy.toFixed(1)},grounded:P.grounded,day,deaths,frames};}
+  state(){return{state,lit,litSun,litLamp,safeLight,smolder:Math.round(smolder),elevDeg:Math.round(elevDeg),pos:{x:+P.x.toFixed(1),y:+P.y.toFixed(1)},vel:{x:+P.vx.toFixed(1),y:+P.vy.toFixed(1)},grounded:P.grounded,day,deaths,frames,lamps:LAMPS.map(l=>{const p=lampPos(l,worldT);return{x:+p.x.toFixed(1),y:+p.y.toFixed(1)};})};}
 };
 </script>
 </body>
