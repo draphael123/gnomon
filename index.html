@@ -192,15 +192,20 @@ const solids=[
   {x:104,y:-5,w:26,h:31,tone:0},                         // terrace 2
   {x:176,y:-4,w:18,h:30,tone:0},                         // terrace 3
   {x:246,y:-6,w:22,h:32,tone:0},                         // terrace 4
-  {x:54,y:-18,w:3,h:15,tone:1},                          // towers
-  {x:92,y:-24,w:4,h:24,tone:1},
-  {x:150,y:-14,w:3,h:14,tone:1},
-  {x:207,y:-28,w:5,h:28,tone:1},
-  {x:258,y:-16,w:3,h:10,tone:1},
+  // towers: each floats on an arched base (legs are drawn behind the play plane, no collision)
+  {x:54,y:-18,w:3,h:12,tone:1,arch:true},
+  {x:92,y:-24,w:4,h:21,tone:1,arch:true},
+  {x:150,y:-14,w:3,h:11,tone:1,arch:true},
+  {x:207,y:-28,w:5,h:24,tone:1,arch:true},
+  {x:258,y:-16,w:3,h:7,tone:1,arch:true},
+  // half-steps so the taller terraces can be mounted from the ground (flush against each terrace)
+  {x:99.5,y:-2.4,w:4.5,h:2.4,tone:0},
+  {x:171,y:-2,w:5,h:2,tone:0},
+  {x:241,y:-3,w:5,h:3,tone:0},
   {x:86,y:-15,w:6,h:1.2,tone:2},                         // overhang ledges
   {x:153,y:-6.5,w:6,h:1.2,tone:2},
   {x:201,y:-18,w:6,h:1.2,tone:2},
-  {x:66,y:-2.5,w:5,h:1,tone:2},                          // floating platforms
+  {x:66,y:-3.5,w:5,h:1,tone:2},                          // floating platforms
   {x:74,y:-5,w:5,h:1,tone:2},
   {x:82,y:-7.5,w:5,h:1,tone:2},
   {x:118,y:-8,w:5,h:1,tone:2},
@@ -215,9 +220,19 @@ const solids=[
   {x:236,y:-8,w:5,h:1,tone:2},
   {x:270,y:-9,w:5,h:1,tone:2},
   {x:277,y:-12,w:5,h:1,tone:2},
-  {x:177,y:-16,w:2,h:12,tone:1},                         // gnomon pillar (on terrace 3)
-  {x:228.6,y:-20,w:1.8,h:20,tone:1},                     // windwheel pole
+  {x:177,y:-16,w:2,h:9,tone:1,arch:true},                // gnomon pillar (open base, on terrace 3)
+  {x:228.6,y:-20,w:1.8,h:17,tone:1,arch:true},           // windwheel pole (open base)
   {x:286,y:-32,w:12,h:58,tone:1},                        // bell tower
+];
+// decorative arch legs (behind the play plane: no collision, no shadow)
+const ARCHLEGS=[
+  [54,-6,0.7,3],[56.3,-6,0.7,3],
+  [92,-3,0.9,3],[95.1,-3,0.9,3],
+  [150,-3,0.7,3],[152.3,-3,0.7,3],
+  [207,-4,1.1,4],[210.9,-4,1.1,4],
+  [258,-9,0.7,3],[260.3,-9,0.7,3],
+  [177,-7,0.5,3],[178.5,-7,0.5,3],
+  [228.6,-3,0.45,3],[229.95,-3,0.45,3],
 ];
 const statue={cx:178,cy:-17.5,len:24,wid:1.2,ang:-0.3,target:-0.3};
 const wheel={cx:229.5,cy:-21.5,arms:4,len:11,wid:1.6,ang:0};
@@ -347,8 +362,11 @@ function stepPhysics(dt){
   // X sweep
   P.x+=P.vx*dt;
   for(const r of solids){
-    if(overlaps(P.x-P.hw,P.y-P.h,P.hw*2,P.h,r)){
-      if(P.vx>0)P.x=r.x-P.hw;else if(P.vx<0)P.x=r.x+r.w+P.hw;
+    if(!overlaps(P.x-P.hw,P.y-P.h,P.hw*2,P.h,r))continue;
+    const dxPen=Math.min(P.x+P.hw-r.x,r.x+r.w-(P.x-P.hw));
+    const dyPen=Math.min(P.y-r.y,r.y+r.h-(P.y-P.h));
+    if(dxPen<=dyPen){ // nearest-face push, never farther than the overlap itself
+      P.x+=(P.x<r.x+r.w/2)?-dxPen:dxPen;
       P.vx=0;
     }
   }
@@ -357,18 +375,26 @@ function stepPhysics(dt){
   P.y+=P.vy*dt;
   P.grounded=false;
   for(const r of solids){
-    if(overlaps(P.x-P.hw,P.y-P.h,P.hw*2,P.h,r)){
-      if(P.vy>0){
+    if(!overlaps(P.x-P.hw,P.y-P.h,P.hw*2,P.h,r))continue;
+    const dxPen=Math.min(P.x+P.hw-r.x,r.x+r.w-(P.x-P.hw));
+    const dyPen=Math.min(P.y-r.y,r.y+r.h-(P.y-P.h));
+    if(dyPen<=dxPen){
+      if(P.y<r.y+r.h/2){ // resolve up onto the surface = landing
         const impact=P.vy;
         P.y=r.y;P.grounded=true;P.coyote=COYOTE;
+        if(P.vy>0)P.vy=0;
         if(impact>7){
           spawnDust(P.x,P.y,Math.min(10,Math.round(impact/3)),impact*0.35);
           sfx.land(impact);squash=Math.min(0.32,impact*0.012);
           if(impact>22)shake(0.12);
         }
+      }else{ // resolve down from a ceiling
+        P.y=r.y+r.h+P.h;
+        if(P.vy<0)P.vy=0;
       }
-      else if(P.vy<0){P.y=r.y+r.h+P.h;}
-      P.vy=0;
+    }else{
+      P.x+=(P.x<r.x+r.w/2)?-dxPen:dxPen;
+      P.vx=0;
     }
   }
   if(Math.abs(P.vx)>0.5&&P.grounded){
@@ -779,6 +805,13 @@ function render(){
     ctx.setLineDash([]);
   }
 
+  // arch legs (recessed, behind the play plane)
+  for(const L of ARCHLEGS){
+    ctx.fillStyle='#8f6234';
+    ctx.fillRect(L[0],L[1],L[2],L[3]);
+    ctx.strokeStyle='rgba(50,30,14,0.5)';ctx.lineWidth=0.1;
+    ctx.strokeRect(L[0],L[1],L[2],L[3]);
+  }
   // solids
   solids.forEach((r,ri)=>{
     const base=r.tone===1?'#b57e46':(r.tone===2?'#8a5a33':'#c99a5b');
@@ -827,8 +860,8 @@ function render(){
     }
     ctx.strokeStyle='rgba(255,235,190,0.8)';ctx.lineWidth=0.14;
     ctx.beginPath();ctx.moveTo(r.x,r.y);ctx.lineTo(r.x+r.w,r.y);ctx.stroke();
-    // sand drifts banked against tall structures
-    if(r.tone===1&&r.h>5){
+    // sand drifts banked against tall structures (not arch bodies — their base floats)
+    if(r.tone===1&&r.h>5&&!r.arch){
       ctx.fillStyle='rgba(214,178,110,0.9)';
       const by=r.y+r.h<=0.2?r.y+r.h:0;
       ctx.beginPath();ctx.moveTo(r.x-1.6,by);ctx.quadraticCurveTo(r.x-0.4,by-0.9,r.x,by-1.1);ctx.lineTo(r.x,by);ctx.closePath();ctx.fill();
